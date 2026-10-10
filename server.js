@@ -90,7 +90,161 @@ app.get("/api/books/:id", async (req, res) => {
   }
 });
 
+// CREATE a new book
+app.post("/api/books", async (req, res) => {
+  try {
+    const { title, author, library_id } = req.body;
+
+    if (
+      typeof title !== "string" ||
+      typeof author !== "string" ||
+      !title.trim() ||
+      !author.trim() ||
+      !Number.isSafeInteger(library_id) ||
+      library_id <= 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid title, author and library_id are required",
+      });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO books (title, author, library_id)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [title.trim(), author.trim(), library_id],
+    );
+
+    return res.status(201).json({
+      success: true,
+      data: result.rows[0],
+    });
+  } catch (error) {
+    if (error.code === "23503") {
+      return res.status(400).json({
+        success: false,
+        message: "Library does not exist",
+      });
+    }
+
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
 // GET one book by ID from PostgreSQL
+// UPDATE a book
+app.patch("/api/books/:id", async (req, res) => {
+  try {
+    const bookId = Number(req.params.id);
+    const { title, author, library_id } = req.body;
+
+    if (!Number.isSafeInteger(bookId) || bookId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid book ID",
+      });
+    }
+
+    if (
+      (title !== undefined && (typeof title !== "string" || !title.trim())) ||
+      (author !== undefined &&
+        (typeof author !== "string" || !author.trim())) ||
+      (library_id !== undefined &&
+        (!Number.isSafeInteger(library_id) || library_id <= 0))
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid book details",
+      });
+    }
+
+    const result = await pool.query(
+      `UPDATE books
+       SET title = COALESCE($1, title),
+           author = COALESCE($2, author),
+           library_id = COALESCE($3, library_id)
+       WHERE id = $4
+       RETURNING *`,
+      [
+        title === undefined ? null : title.trim(),
+        author === undefined ? null : author.trim(),
+        library_id ?? null,
+        bookId,
+      ],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Book not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: result.rows[0],
+    });
+  } catch (error) {
+    if (error.code === "23503") {
+      return res.status(400).json({
+        success: false,
+        message: "Library does not exist",
+      });
+    }
+
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
+// DELETE a book
+app.delete("/api/books/:id", async (req, res) => {
+  try {
+    const bookId = Number(req.params.id);
+
+    if (!Number.isSafeInteger(bookId) || bookId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid book ID",
+      });
+    }
+
+    const result = await pool.query(
+      "DELETE FROM books WHERE id = $1 RETURNING *",
+      [bookId],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Book not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Book deleted successfully",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
 
 // ========================================
 // LIBRARY APIs
