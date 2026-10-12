@@ -438,6 +438,201 @@ app.get("/api/books", async (req, res) => {
   }
 });
 
+// BORROW A BOOK
+app.post("/api/borrowings", async (req, res) => {
+  try {
+    const { user_id, book_id } = req.body;
+
+    if (
+      !Number.isSafeInteger(user_id) ||
+      user_id <= 0 ||
+      !Number.isSafeInteger(book_id) ||
+      book_id <= 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid user_id and book_id are required",
+      });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO borrowings (user_id, book_id, due_at)
+       VALUES ($1, $2, NOW() + INTERVAL '14 days')
+       RETURNING *`,
+      [user_id, book_id],
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "Book borrowed successfully",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({
+        success: false,
+        message: "This book is already borrowed",
+      });
+    }
+
+    if (error.code === "23503") {
+      return res.status(400).json({
+        success: false,
+        message: "User or book does not exist",
+      });
+    }
+
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
+// RETURN A BORROWED BOOK
+app.patch("/api/borrowings/:id/return", async (req, res) => {
+  try {
+    const borrowingId = Number(req.params.id);
+
+    if (!Number.isSafeInteger(borrowingId) || borrowingId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid borrowing ID",
+      });
+    }
+
+    const result = await pool.query(
+      `UPDATE borrowings
+       SET returned_at = NOW()
+       WHERE id = $1
+         AND returned_at IS NULL
+       RETURNING *`,
+      [borrowingId],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Active borrowing not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Book returned successfully",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
+// GET borrowings with optional status filter
+app.get("/api/borrowings", async (req, res) => {
+  try {
+    const { status } = req.query;
+
+    if (status !== undefined && !["active", "returned"].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Status must be active or returned",
+      });
+    }
+
+    let query = `
+      SELECT
+        borrowings.id,
+        users.name AS borrower_name,
+        books.title AS book_title,
+        borrowings.borrowed_at,
+        borrowings.due_at,
+        borrowings.returned_at
+      FROM borrowings
+      JOIN users ON borrowings.user_id = users.id
+      JOIN books ON borrowings.book_id = books.id
+    `;
+
+    if (status === "active") {
+      query += " WHERE borrowings.returned_at IS NULL";
+    } else if (status === "returned") {
+      query += " WHERE borrowings.returned_at IS NOT NULL";
+    }
+
+    query += " ORDER BY borrowings.id DESC";
+
+    const result = await pool.query(query);
+
+    return res.status(200).json({
+      success: true,
+      data: result.rows,
+    });
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
+// GET one borrowing by ID
+app.get("/api/borrowings/:id", async (req, res) => {
+  try {
+    const borrowingId = Number(req.params.id);
+
+    if (!Number.isSafeInteger(borrowingId) || borrowingId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid borrowing ID",
+      });
+    }
+
+    const result = await pool.query(
+      `SELECT
+        borrowings.id,
+        borrowings.user_id,
+        users.name AS borrower_name,
+        borrowings.book_id,
+        books.title AS book_title,
+        borrowings.borrowed_at,
+        borrowings.due_at,
+        borrowings.returned_at
+       FROM borrowings
+       JOIN users ON borrowings.user_id = users.id
+       JOIN books ON borrowings.book_id = books.id
+       WHERE borrowings.id = $1`,
+      [borrowingId],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Borrowing not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
 app.listen(3000, () => {
   console.log("Server is running on port 3000");
 });
